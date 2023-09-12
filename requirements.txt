@@ -1,0 +1,5 @@
+farm-haystack[inference]
+flask
+trafilatura
+requests
+python-dotenv
