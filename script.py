@@ -1,32 +1,26 @@
-import json
-import os
-import requests
+# import json
+# import os
+# import requests
 from haystack.schema import Document
-from haystack.nodes import FARMReader
+from haystack.nodes import FARMReader, TransformersQueryClassifier
 from flask import Flask, request, jsonify
 from trafilatura import fetch_url, extract
 from dotenv import load_dotenv
 
 load_dotenv()
 
-HF_API_TOKEN = os.environ.get('HF_API_TOKEN')
-HF_FAKE_NEWS_API_URL = "https://api-inference.huggingface.co/models/jy46604790/Fake-News-Bert-Detect"
-MOZ_API_ID = os.environ.get('MOZ_API_ID')
-MOZ_API_KEY = os.environ.get('MOZ_API_KEY')
 
-fake_news_api_headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-
-def query_fake_news(payload):
-    request_body = json.dumps(payload)
-    response = requests.request(
-        "POST", HF_FAKE_NEWS_API_URL, headers=fake_news_api_headers, data=request_body
-    )
-    response_body = response.content.decode("utf-8")
-    return json.loads(response_body)[0]
+def extract_web_page_content(url):
+    downloaded = fetch_url(url)
+    return extract(downloaded)
 
 
-model_name = "deepset/roberta-base-squad2"
-reader = FARMReader(model_name, use_gpu=True)
+reader_model_name = "deepset/roberta-base-squad2"
+reader = FARMReader(reader_model_name, use_gpu=True)
+
+statement_classifier_model_name = "jy46604790/Fake-News-Bert-Detect"
+# statement_classifier_model_name = "typeform/distilbert-base-uncased-mnli"
+statement_classifier = TransformersQueryClassifier(model_name_or_path=statement_classifier_model_name, use_gpu=True)
 
 app = Flask(__name__)
 
@@ -35,26 +29,28 @@ app = Flask(__name__)
 def index():
     data = request.json
 
-    if data is None or "question" not in data or "documents" not in data:
+    if data is None or "query" not in data or "url" not in data:
         return jsonify({"error": "Invalid request data"}), 400
 
-    documents = [
-        Document.from_dict(document_dict) for document_dict in data["documents"]
-    ]
+    content = extract_web_page_content(data["url"])
+
+    if content is None:
+        return jsonify({"error": "URL provided did not return any content"}), 400
+
     prediction = reader.predict(
-        query=data["question"],
-        documents=documents,
+        query=data["query"],
+        documents=[Document.from_dict({"content": content})],
     )
     answer_prediction = prediction["answers"][0]
 
-    fake_news_prediction = query_fake_news(data["documents"][0]["content"])
+    fake_news_prediction = statement_classifier.run(query=content)
 
     if prediction["answers"]:
         if prediction["answers"][0]:
             return jsonify(
                 {
-                    "query": data["question"],
-                    "content": data["documents"][0]["content"],
+                    "query": data["query"],
+                    "url": data["url"],
                     "answer_prediction": answer_prediction,
                     "fake_news_prediction": fake_news_prediction,
                 }
