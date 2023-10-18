@@ -5,9 +5,6 @@ from haystack.nodes import (
     TransformersDocumentClassifier,
 )
 
-# Criando uma instância do Haystack para pré-processar os documentos.
-doc_preprocessor = PreProcessor()
-
 # Carrega um modelo do Haystack para classificar notícias reais e falsas
 doc_classifier_model_name = "hamzab/roberta-fake-news-classification"
 doc_classifier = TransformersDocumentClassifier(
@@ -24,6 +21,7 @@ content = """
 """
 
 # Pré-processa o conteúdo da página web dividindo em documentos do Haystack
+doc_preprocessor = PreProcessor()
 docs = doc_preprocessor.process(Document.from_dict({"content": content}))
 
 # Prepara os documentos para classificação de notícias reais e falsas
