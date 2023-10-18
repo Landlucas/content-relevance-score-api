@@ -3,3 +3,5 @@ flask
 trafilatura
 requests
 python-dotenv
+transformers
+pandas

@@ -2,9 +2,9 @@ import os
 import requests
 import torch
 from haystack.schema import Document
-from haystack.nodes import FARMReader
+from haystack.nodes import FARMReader, TransformersSummarizer
 from flask import Flask, request, jsonify
-from trafilatura import fetch_url, extract, extract_metadata
+from trafilatura import fetch_url, extract
 from dotenv import load_dotenv
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
@@ -28,6 +28,31 @@ def extract_web_page_content(url):
 def extract_web_page_metrics(url):
     data = {"targets": [url]}
     return requests.post(moz_endpoint, auth=(moz_username, moz_password), json=data)
+
+
+def summarize_text(text):
+    docs = [Document(text)]
+
+    summarizer = TransformersSummarizer(model_name_or_path="google/pegasus-xsum", use_gpu=True)
+    summary = summarizer.predict(documents=docs)
+
+    return summary[0].meta["summary"]
+
+def summarize_large_text(input_text):
+    max_chunk_size = 512
+
+    chunks = [input_text[i:i+max_chunk_size] for i in range(0, len(input_text), max_chunk_size)]
+
+    print(f"Input size: {len(input_text)}")
+    print(f"Number of chunks: {len(chunks)}")
+
+    summaries = []
+    for chunk in chunks:
+        chunk_summary = summarize_text(chunk)
+        summaries.append(chunk_summary)
+
+    combined_summary = " ".join(summaries)
+    return combined_summary
 
 
 # Realiza a predição de notícias falsas usando um modelo de classificação de texto pré-treinado.
@@ -77,7 +102,13 @@ def predict_fake_news(title, text):
 
 # Carregando um modelo do Haystack para responder a perguntas baseado no modelo "deepset/roberta-base-squad2".
 reader_model_name = "deepset/roberta-base-squad2"
-reader = FARMReader(reader_model_name, use_gpu=True)
+reader = FARMReader(
+    reader_model_name,
+    context_window_size=386,
+    max_seq_len=386,
+    batch_size=96,
+    use_gpu=True,
+)
 
 # Criando uma instância do aplicativo Flask.
 app = Flask(__name__)
@@ -137,8 +168,10 @@ def index():
     # Obtém a pontuação de confiança da resposta
     answer_confidence_score = answer_prediction.score
 
+    summary = summarize_large_text(page_content)
+
     # Faz uma predição de notícias falsas
-    fake_news_prediction = predict_fake_news(page_title, page_content)
+    fake_news_prediction = predict_fake_news(page_title, summary)
 
     # Obtém a pontuação de confiança na notícia real
     trust_score = fake_news_prediction["Real"]
@@ -156,6 +189,7 @@ def index():
                     "answer_confidence_score": answer_confidence_score,
                     "trust_score": trust_score,
                     "page_authority_score": page_authority_score,
+                    "summary": summary,
                 }
             )
 
