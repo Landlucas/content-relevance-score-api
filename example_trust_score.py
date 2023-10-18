@@ -1,67 +1,43 @@
-# Carrega a ferramenta pyTorch para inferência do modelo
-import torch
+# Importa os módulos necessários
+from haystack.schema import Document
+from haystack.nodes import (
+    PreProcessor,
+    TransformersDocumentClassifier,
+)
 
-# Carrega o AutoTokenizer para o processo de tokenização de texto
-# Carrega o AutoModel para inicializar automaticamente o modelo dado seu nome
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+# Criando uma instância do Haystack para pré-processar os documentos.
+doc_preprocessor = PreProcessor()
+
+# Carrega um modelo do Haystack para classificar notícias reais e falsas
+doc_classifier_model_name = "hamzab/roberta-fake-news-classification"
+doc_classifier = TransformersDocumentClassifier(
+    model_name_or_path=doc_classifier_model_name, use_gpu=True, top_k=None
+)
 
 # Exemplo de título de uma página web.
 title = "About fake news"
 
 # Exemplo de conteúdo da mesma página.
-text = """
+content = """
 "Fake news" is a term that refers to false or misleading information.
 [...]
 """
 
-# Inicializa o tokenizer com o vocabulário do modelo de classificação de notícias falsas
-tokenizer = AutoTokenizer.from_pretrained("hamzab/roberta-fake-news-classification")
+# Pré-processa o conteúdo da página web dividindo em documentos do Haystack
+docs = doc_preprocessor.process(Document.from_dict({"content": content}))
 
-# Inicializa o modelo de classificação de notícias falsas
-model = AutoModelForSequenceClassification.from_pretrained(
-    "hamzab/roberta-fake-news-classification"
-)
+# Prepara os documentos para classificação de notícias reais e falsas
+for doc in docs:
+    doc.content = "<title>" + title + "<content>" + doc.content + "<end>"
 
-# Combina o título e o texto da notícia em uma única string formatada
-# de acordo com os requisitos do modelo
-input_str = "<title>" + title + "<content>" + text + "<end>"
+# Faz uma predição de classificação de notícias reais e falsas
+processed_classifier_documents = doc_classifier.predict(documents=docs)
 
-# Converte a string em tokens e os codifica
-input_ids = tokenizer.encode_plus(
-    input_str,
-    max_length=512,  # Define um comprimento máximo para o input
-    padding="max_length",  # Preenche com zeros até o comprimento máximo
-    truncation=True,  # Trunca o input se exceder o comprimento máximo
-    return_tensors="pt",  # Retorna tensores PyTorch
-)
+# Calcula a pontuação de confiança a partir dos documentos classificados
+trust_score = 0
+for doc in docs:
+    trust_score += doc.meta["classification"]["details"]["TRUE"]
+trust_score = trust_score / len(docs)
 
-# Determina o dispositivo a ser usado para inferência (GPU ou CPU)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# Move o modelo para o dispositivo especificado
-model.to(device)
-
-# Desabilita o cálculo de gradientes para economizar memória durante a inferência
-with torch.no_grad():
-    # Realiza a inferência com o modelo
-    output = model(
-        input_ids["input_ids"].to(device),
-        attention_mask=input_ids["attention_mask"].to(device),
-    )
-
-# Converte as probabilidades de saída em um formato legível:
-# Fake e Real, ambos com valores entre 0 e 1.
-fake_news_prediction = (
-    dict(
-        zip(
-            ["Fake", "Real"],
-            [x.item() for x in list(torch.nn.Softmax()(output.logits)[0])],
-        )
-    )
-)
-# Exemplo de estrutura: {'Fake': 0.02, 'Real': 0.98}
-
-# Obtém a pontuação de confiança na notícia real
-trust_score = fake_news_prediction["Real"]
 print(trust_score)
-# Exemplo de saída: 0.98
+# Exemplo de saída: 0.986523...

@@ -1,5 +1,5 @@
-# Carrega a API FARMReader e ferramenta Document através da biblioteca Haystack.
-from haystack.nodes import FARMReader
+# Carrega componentes necessários da biblioteca Haystack.
+from haystack.nodes import FARMReader, PreProcessor
 from haystack.schema import Document
 from haystack.utils import print_answers
 
@@ -19,10 +19,14 @@ FARMReader is a component developed by Deepset.
 # Exemplo de uma pergunta.
 query = "Who developed FARMReader?"
 
+# Pré-processa o conteúdo da página web dividindo em documentos do Haystack.
+doc_preprocessor = PreProcessor()
+docs = doc_preprocessor.process(Document.from_dict({"content": page_content}))
+
 # Faz uma predição com o modelo de leitura do Haystack
 prediction = reader.predict(
     query=query,
-    documents=[Document.from_dict({"content": page_content})],
+    documents=[docs],
 )
 
 # Obtém a primeira predição de resposta do modelo

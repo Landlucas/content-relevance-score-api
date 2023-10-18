@@ -1,12 +1,15 @@
 import os
 import requests
-import torch
 from haystack.schema import Document
-from haystack.nodes import FARMReader, TransformersSummarizer
+from haystack.nodes import (
+    FARMReader,
+    PreProcessor,
+)
 from flask import Flask, request, jsonify
 from trafilatura import fetch_url, extract
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+from doc_classifier.transformers import TransformersDocumentClassifier
 
 # Carregando variáveis de ambiente de um arquivo .env.
 load_dotenv()
@@ -30,84 +33,40 @@ def extract_web_page_metrics(url):
     return requests.post(moz_endpoint, auth=(moz_username, moz_password), json=data)
 
 
-def summarize_text(text):
-    docs = [Document(text)]
-
-    summarizer = TransformersSummarizer(model_name_or_path="google/pegasus-xsum", use_gpu=True)
-    summary = summarizer.predict(documents=docs)
-
-    return summary[0].meta["summary"]
-
-def summarize_large_text(input_text):
-    max_chunk_size = 512
-
-    chunks = [input_text[i:i+max_chunk_size] for i in range(0, len(input_text), max_chunk_size)]
-
-    print(f"Input size: {len(input_text)}")
-    print(f"Number of chunks: {len(chunks)}")
-
-    summaries = []
-    for chunk in chunks:
-        chunk_summary = summarize_text(chunk)
-        summaries.append(chunk_summary)
-
-    combined_summary = " ".join(summaries)
-    return combined_summary
+# Prepara os documentos para classificação de notícias reais e falsas
+def prepare_docs_for_classification(title, docs):
+    for doc in docs:
+        doc.content = "<title>" + title + "<content>" + doc.content + "<end>"
+    return docs
 
 
-# Realiza a predição de notícias falsas usando um modelo de classificação de texto pré-treinado.
-def predict_fake_news(title, text):
-    # Carrega o tokenizer pré-treinado para o modelo de classificação de notícias falsas
-    tokenizer = AutoTokenizer.from_pretrained("hamzab/roberta-fake-news-classification")
-
-    # Carrega o modelo de classificação de notícias falsas
-    model = AutoModelForSequenceClassification.from_pretrained(
-        "hamzab/roberta-fake-news-classification"
-    )
-
-    # Combina o título e o texto da notícia em uma única string formatada de acordo com os requisitos do modelo
-    input_str = "<title>" + title + "<content>" + text + "<end>"
-
-    # Converte a string em tokens e os codifica
-    input_ids = tokenizer.encode_plus(
-        input_str,
-        max_length=512,  # Define o comprimento máximo do input
-        padding="max_length",  # Preenche com zeros até o comprimento máximo
-        truncation=True,  # Trunca o input se exceder o comprimento máximo
-        return_tensors="pt",  # Retorna tensores PyTorch
-    )
-
-    # Determina o dispositivo a ser usado para inferência (GPU ou CPU)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Move o modelo para o dispositivo especificado
-    model.to(device)
-
-    # Desabilita o cálculo de gradientes para economizar memória durante a inferência
-    with torch.no_grad():
-        # Realiza a inferência com o modelo
-        output = model(
-            input_ids["input_ids"].to(device),
-            attention_mask=input_ids["attention_mask"].to(device),
-        )
-
-    # Converte as probabilidades de saída em um formato legível: Fake e Real, ambos com valores entre 0 e 1.
-    return dict(
-        zip(
-            ["Fake", "Real"],
-            [x.item() for x in list(torch.nn.Softmax()(output.logits)[0])],
-        )
-    )
+# Calcula a pontuação de confiança a partir dos documentos classificados
+def calculate_trust_score_from_docs(docs):
+    trust_score = 0
+    for doc in docs:
+        trust_score += doc.meta["classification"]["details"]["TRUE"]
+    return trust_score / len(docs)
 
 
-# Carregando um modelo do Haystack para responder a perguntas baseado no modelo "deepset/roberta-base-squad2".
+# Criando uma instância do Haystack para pré-processar os documentos.
+doc_preprocessor = PreProcessor()
+
+# Carregando um modelo do Haystack para responder a perguntas
 reader_model_name = "deepset/roberta-base-squad2"
 reader = FARMReader(
     reader_model_name,
-    context_window_size=386,
-    max_seq_len=386,
-    batch_size=96,
-    use_gpu=True,
+    context_window_size=386,  # Seta o tamanho da janela de contexto para 386 caracteres
+    max_seq_len=386,  # Seta o tamanho máximo da sequência para 386 caracteres
+    batch_size=96,  # Seta o tamanho do batch para 96
+    use_gpu=True,  # Seta para utilizar a GPU
+    top_k=1,  # Seta o número de respostas finais para 1 (a resposta mais confiante)
+    top_k_per_candidate=1,  # Seta o número de respostas por documento para 1
+)
+
+# Carregando um modelo do Haystack para classificar notícias reais e falsas
+doc_classifier_model_name = "hamzab/roberta-fake-news-classification"
+doc_classifier = TransformersDocumentClassifier(
+    model_name_or_path=doc_classifier_model_name, use_gpu=True, top_k=None
 )
 
 # Criando uma instância do aplicativo Flask.
@@ -156,25 +115,28 @@ def index():
             400,
         )
 
-    # Faz uma predição com o modelo de leitura do Haystack
-    prediction = reader.predict(
-        query=data["query"],
-        documents=[Document.from_dict({"content": page_content})],
+    # Pré-processa o conteúdo da página web dividindo em documentos do Haystack
+    content_docs = doc_preprocessor.process(
+        Document.from_dict({"content": page_content})
     )
 
-    # Obtém a primeira predição de resposta do modelo
-    answer_prediction = prediction["answers"][0]
+    # Faz uma predição de resposta com o modelo de leitura do Haystack
+    prediction = reader.predict(
+        query=data["query"],
+        documents=content_docs,
+    )
 
     # Obtém a pontuação de confiança da resposta
-    answer_confidence_score = answer_prediction.score
+    answer_confidence_score = prediction["answers"][0].score
 
-    summary = summarize_large_text(page_content)
+    # Prepara os documentos para classificação de notícias reais e falsas
+    classifier_docs = prepare_docs_for_classification(page_title, content_docs)
 
-    # Faz uma predição de notícias falsas
-    fake_news_prediction = predict_fake_news(page_title, summary)
+    # Faz uma predição de classificação de notícias reais e falsas
+    processed_classifier_documents = doc_classifier.predict(documents=classifier_docs)
 
     # Obtém a pontuação de confiança na notícia real
-    trust_score = fake_news_prediction["Real"]
+    trust_score = calculate_trust_score_from_docs(processed_classifier_documents)
 
     # Verifica se há uma resposta do modelo
     if prediction["answers"]:
@@ -189,7 +151,7 @@ def index():
                     "answer_confidence_score": answer_confidence_score,
                     "trust_score": trust_score,
                     "page_authority_score": page_authority_score,
-                    "summary": summary,
+                    "answer": prediction["answers"][0].answer,
                 }
             )
 
