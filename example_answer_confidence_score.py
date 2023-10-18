@@ -6,15 +6,15 @@ from haystack.utils import print_answers
 # Define o nome do modelo a ser utilizado: "deepset/roberta-base-squad2".
 reader_model_name = "deepset/roberta-base-squad2"
 
-# Cria uma instância do FARMReader com o modelo definido solicitando o 
+# Cria uma instância do FARMReader com o modelo definido solicitando o
 # uso da GPU para as predições.
 reader = FARMReader(reader_model_name, use_gpu=True)
 
 # Exemplo de conteúdo de uma página web.
-page_content = '''
+page_content = """
 FARMReader is a component developed by Deepset.
 [...]
-'''
+"""
 
 # Exemplo de uma pergunta.
 query = "Who developed FARMReader?"
@@ -26,7 +26,7 @@ docs = doc_preprocessor.process(Document.from_dict({"content": page_content}))
 # Faz uma predição com o modelo de leitura do Haystack
 prediction = reader.predict(
     query=query,
-    documents=[docs],
+    documents=docs,
 )
 
 # Obtém a primeira predição de resposta do modelo
@@ -37,4 +37,3 @@ print_answers(prediction, details="all")
 answer_confidence_score = answer_prediction.score
 print(answer_confidence_score)
 # Exemplo de saída: 0.998
-
