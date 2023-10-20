@@ -1,2 +1,6 @@
 .env
 .venv
+serp_client_test_results.txt
+serp_client_test_results.csv
+serp_client_test_sample.csv
+serp_client_test_full.csv
