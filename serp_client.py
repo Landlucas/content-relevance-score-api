@@ -31,7 +31,8 @@ for index, row in df.iterrows():
             "url": url,
             "answer_confidence_score": answer_confidence_score,
             "trust_score": trust_score,
-            "page_authority_score": page_authority_score
+            "page_authority_score": page_authority_score,
+            "content": content
         })
 
         print("-" * 30)
@@ -46,4 +47,4 @@ print("-" * 30)
 
 result_df = pd.DataFrame(result_data)
 
-result_df.to_csv("serp_client_results.csv", index=False)
+result_df.to_csv("serp_client_test_results.csv", index=False)
